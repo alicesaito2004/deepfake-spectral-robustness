@@ -1,0 +1,20 @@
+{
+  "train": {
+    "real_indices": [],
+    "fake_indices": []
+  },
+  "val": {
+    "real_indices": [],
+    "fake_indices": []
+  },
+  "test": {
+    "real_indices": [],
+    "fake_indices": []
+  },
+  "metadata": {
+    "seed": 42,
+    "n_real": 0,
+    "n_fake": 0,
+    "_note": "Run python scripts/generate_splits.py after downloading data"
+  }
+}
