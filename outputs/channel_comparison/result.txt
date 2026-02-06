@@ -1,0 +1,3 @@
+Grayscale separability:   0.8789
+Per-channel separability: 0.8640
+Winner: GRAYSCALE
