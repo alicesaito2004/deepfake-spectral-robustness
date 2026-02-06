@@ -144,3 +144,44 @@ def fgsm_attack_spectrum(
         perturbed_spectra = spectra + epsilon * grad_sign
 
     return perturbed_images.detach(), perturbed_spectra.detach()
+
+
+def fgsm_through_fft(
+    model: nn.Module,
+    images: torch.Tensor,
+    labels: torch.Tensor,
+    epsilon: float,
+    compute_spectrum_fn,
+    criterion: nn.Module = None,
+) -> torch.Tensor:
+    """FGSM attack on spectrum classifier with gradients through FFT.
+
+    Perturbs images in pixel space, recomputes spectrum, attacks spectrum classifier.
+    Gradients flow: loss -> spectrum -> FFT -> pixels.
+
+    Args:
+        model: Spectrum classifier that takes spectra and returns logits.
+        images: Input images (B, C, H, W) in [0, 1].
+        labels: Ground truth labels (B,).
+        epsilon: Perturbation magnitude.
+        compute_spectrum_fn: Function to compute spectrum from images.
+        criterion: Loss function.
+
+    Returns:
+        Adversarial images (B, C, H, W) clamped to [0, 1].
+    """
+    if criterion is None:
+        criterion = nn.CrossEntropyLoss()
+
+    images = images.clone().detach().requires_grad_(True)
+
+    spectra = compute_spectrum_fn(images)
+    outputs = model(spectra)
+    loss = criterion(outputs, labels)
+    loss.backward()
+
+    grad_sign = images.grad.sign()
+    perturbed = images + epsilon * grad_sign
+    perturbed = torch.clamp(perturbed, 0.0, 1.0)
+
+    return perturbed.detach()
