@@ -8,19 +8,19 @@ Expected source structure:
     /path/to/downloaded/
     ├── 512/
     │   ├── man/
-    │   └── women/
+    │   └── woman/
     ├── 768/
     │   ├── man/
-    │   └── women/
+    │   └── woman/
     └── 1024/
         ├── man/
-        └── women/
+        └── woman/
 
 Output structure:
     data/cross_generator/
-    ├── sd15/   (500 images: 250 man + 250 women, all 256x256 PNG)
-    ├── sd21/   (500 images: 250 man + 250 women, all 256x256 PNG)
-    └── sdxl/   (500 images: 250 man + 250 women, all 256x256 PNG)
+    ├── sd15/   (500 images: 250 man + 250 woman, all 256x256 PNG)
+    ├── sd21/   (500 images: 250 man + 250 woman, all 256x256 PNG)
+    └── sdxl/   (500 images: 250 man + 250 woman, all 256x256 PNG)
 """
 
 import argparse
@@ -36,7 +36,7 @@ VERSIONS = {
     "1024": "sdxl",
 }
 
-GENDERS = ["man", "women"]
+GENDERS = ["man", "woman"]
 VALID_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
@@ -110,10 +110,10 @@ def main():
         if d.exists():
             imgs = list(d.glob("*.png"))
             man_count = len([f for f in imgs if f.name.startswith("man_")])
-            woman_count = len([f for f in imgs if f.name.startswith("women_")])
+            woman_count = len([f for f in imgs if f.name.startswith("woman_")])
             sample = Image.open(imgs[0]) if imgs else None
             size_str = f"{sample.size[0]}x{sample.size[1]}" if sample else "N/A"
-            print(f"  {dst_folder}: {len(imgs)} total ({man_count} man, {woman_count} women), size: {size_str}")
+            print(f"  {dst_folder}: {len(imgs)} total ({man_count} man, {woman_count} woman), size: {size_str}")
         else:
             print(f"  {dst_folder}: NOT FOUND")
 
