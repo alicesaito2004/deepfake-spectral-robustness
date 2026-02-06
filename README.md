@@ -1,98 +1,112 @@
-# Representation-Dependent Adversarial Robustness of Deepfake Detectors
+# Deepfake Spectral Robustness
 
-Does the choice of input representation — pixel, frequency, or fused — determine a deepfake detector's robustness to adversarial attack?
+Investigating whether input representation affects adversarial robustness of deepfake detectors.
 
-## Quick Start
+## Research Question
 
-### 1. Clone and install
+Does transforming images to the frequency domain (via FFT) provide implicit robustness against adversarial attacks? We train three CNN classifiers with identical architectures but different inputs and measure which is hardest to attack.
 
-```bash
-git clone https://github.com/YOUR_USERNAME/deepfake-forensics.git
-cd deepfake-forensics
-pip install -r requirements.txt
-```
+## Classifiers
 
-### 2. Download data
+| Model | Input | Description |
+|-------|-------|-------------|
+| Pixel Classifier | RGB image (3, 256, 256) | Baseline, operates on raw pixels |
+| Spectrum Classifier | FFT magnitude (1, 256, 256) | Operates on frequency domain |
+| Dual-Branch Classifier | Both | Fuses pixel and spectrum features |
 
-```bash
-python scripts/setup_data.py --data-root data/
-```
-
-This downloads CelebA (real faces) and StyleGAN2 (generated faces), resizes everything to 256×256. If auto-download fails, see the script output for manual download instructions.
-
-### 3. Generate splits
-
-```bash
-python scripts/generate_splits.py \
-    --real-dir data/celeba \
-    --fake-dir data/stylegan2 \
-    --output config/splits.json
-```
-
-### 4. Sanity check
-
-```bash
-python scripts/sanity_check.py \
-    --real-dir data/celeba \
-    --fake-dir data/stylegan2 \
-    --output-dir outputs/sanity_check
-```
-
-Review the plots in `outputs/sanity_check/`. If real vs. fake spectra are not visibly different, debug before proceeding.
-
-### 5. Precompute spectra (optional, speeds up training)
-
-```bash
-python scripts/precompute_spectra.py \
-    --real-dir data/celeba \
-    --fake-dir data/stylegan2 \
-    --output-dir data/spectra
-```
-
-### Colab
-
-If working in Google Colab, run `notebooks/colab_setup.py` at the start of each session. Store data on Google Drive under `deepfake-data/`.
+All three share the same 4-block CNN backbone (32→64→128→256 channels) with global average pooling and linear head.
 
 ## Project Structure
 
 ```
-deepfake-forensics/
 ├── config/
-│   └── splits.json              # Train/val/test indices (generated)
-├── data/                        # Images + cached spectra (not in repo)
-├── src/
-│   ├── __init__.py
-│   ├── fft.py                   # Shared FFT function (FROZEN)
-│   ├── dataset.py               # Shared dataset class (FROZEN)
-│   ├── classifier.py            # Three classifier architectures
-│   ├── train_classifier.py      # Training script
-│   ├── eval.py                  # Evaluation metrics
-│   ├── gradcam.py               # Grad-CAM interpretability
-│   └── attacks.py               # FGSM, PGD
+│   └── splits.json              # Train/val/test indices (seed 42)
 ├── scripts/
-│   ├── setup_data.py            # Download and preprocess data
-│   ├── generate_splits.py       # Create train/val/test splits
-│   ├── precompute_spectra.py    # Cache spectra to disk
-│   └── sanity_check.py          # Visual verification
-├── notebooks/
-│   └── colab_setup.py           # Colab session initializer
-├── app/
-│   └── gradio_app.py            # Interactive demo
-├── outputs/                     # Plots, figures, results
-├── requirements.txt
-├── .gitignore
-└── README.md
+│   ├── setup_data.py            # Process raw images to 256x256
+│   ├── setup_cross_generator.py # Process SD images for generalization test
+│   ├── generate_splits.py       # Create deterministic splits
+│   ├── sanity_check.py          # Spectral analysis plots
+│   ├── compare_channels.py      # Grayscale vs RGB comparison
+│   └── eval_adversarial.py      # Adversarial robustness evaluation
+├── src/
+│   ├── fft.py                   # Differentiable FFT operations
+│   ├── dataset.py               # Dataset class returning (image, spectrum, label)
+│   ├── classifier.py            # Pixel, Spectrum, and Dual-Branch classifiers
+│   └── attacks.py               # FGSM and PGD implementations
+├── tests/
+│   ├── test_attacks.py          # FGSM unit tests
+│   └── test_gradient_flow.py    # Verify gradients flow through FFT
+├── checkpoints/                 # Trained model weights
+├── outputs/                     # Plots and results
+└── data/
+    ├── processed/               # Training data (5000 real + 4630 fake)
+    └── cross_generator/         # Stable Diffusion test set
 ```
 
-## Shared Files (Frozen After Day 1)
+## Setup
 
-These files are the contract between teams. Do not modify without notifying everyone:
+```bash
+git clone https://github.com/alicesaito2004/deepfake-spectral-robustness.git
+cd deepfake-spectral-robustness
+pip install -r requirements.txt
+```
 
-- `config/splits.json` — Deterministic data split indices
-- `src/fft.py` — FFT computation (fully differentiable, torch ops only)
-- `src/dataset.py` — Dataset class returning (image, spectrum, label)
+## Data Preparation
 
-## Team Structure
+1. Download the Human Faces Dataset and extract to `data/raw/`:
+   ```
+   data/raw/
+       real/
+       fake/
+   ```
 
-- **Team 1 (Sean + Alice):** FFT pipeline, spectral analysis, adversarial attacks
-- **Team 2 (Yuantong + Meiqi):** Classifiers, training, Grad-CAM, evaluation, demo
+2. Process and generate splits:
+   ```bash
+   python scripts/setup_data.py
+   python scripts/generate_splits.py
+   ```
+
+3. Verify pipeline:
+   ```bash
+   PYTHONPATH=. python scripts/sanity_check.py
+   ```
+
+## Training
+
+```bash
+PYTHONPATH=. python scripts/train.py
+```
+
+Checkpoints saved to `checkpoints/`.
+
+## Adversarial Evaluation
+
+```bash
+PYTHONPATH=. python scripts/eval_adversarial.py \
+    --pixel-ckpt checkpoints/pixel_classifier.pt \
+    --spectrum-ckpt checkpoints/spectrum_classifier.pt \
+    --dual-ckpt checkpoints/dual_classifier.pt
+```
+
+Runs PGD-20 attacks at ε = 1/255, 2/255, 4/255, 8/255, 16/255.
+
+## Key Findings
+
+### Spectral Analysis
+- Fake images retain more high-frequency energy than real images
+- Grayscale spectrum (1 channel) slightly more discriminative than per-channel RGB
+- Clear spectral differences visible in azimuthal average and band energy plots
+
+### Adversarial Robustness
+*Results pending classifier training*
+
+## Team
+
+- Sean & Alice: FFT pipeline, adversarial attacks, robustness evaluation
+- Yuantong & Meiqi: Classifier architectures, training, interpretability
+
+## References
+
+- Durall et al. (2020) "Unmasking DeepFakes with simple Features"
+- Frank et al. (2020) "Leveraging Frequency Analysis for Deep Fake Image Recognition"
+- Dzanic et al. (2020) "Fourier Spectrum Discrepancies in Deep Network Generated Images"
