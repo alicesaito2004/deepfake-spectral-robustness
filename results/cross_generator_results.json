@@ -1,0 +1,107 @@
+{
+  "sd15": {
+    "pixel": {
+      "accuracy": 0.652,
+      "precision": 1.0,
+      "recall": 0.304,
+      "f1": 0.4663,
+      "tp": 152,
+      "fp": 0,
+      "tn": 500,
+      "fn": 348,
+      "total": 1000
+    },
+    "spectrum": {
+      "accuracy": 0.583,
+      "precision": 1.0,
+      "recall": 0.166,
+      "f1": 0.2847,
+      "tp": 83,
+      "fp": 0,
+      "tn": 500,
+      "fn": 417,
+      "total": 1000
+    },
+    "dual": {
+      "accuracy": 0.51,
+      "precision": 1.0,
+      "recall": 0.02,
+      "f1": 0.0392,
+      "tp": 10,
+      "fp": 0,
+      "tn": 500,
+      "fn": 490,
+      "total": 1000
+    }
+  },
+  "sd21": {
+    "pixel": {
+      "accuracy": 0.864,
+      "precision": 1.0,
+      "recall": 0.728,
+      "f1": 0.8426,
+      "tp": 364,
+      "fp": 0,
+      "tn": 500,
+      "fn": 136,
+      "total": 1000
+    },
+    "spectrum": {
+      "accuracy": 0.858,
+      "precision": 1.0,
+      "recall": 0.716,
+      "f1": 0.8345,
+      "tp": 358,
+      "fp": 0,
+      "tn": 500,
+      "fn": 142,
+      "total": 1000
+    },
+    "dual": {
+      "accuracy": 0.782,
+      "precision": 1.0,
+      "recall": 0.564,
+      "f1": 0.7212,
+      "tp": 282,
+      "fp": 0,
+      "tn": 500,
+      "fn": 218,
+      "total": 1000
+    }
+  },
+  "sdxl": {
+    "pixel": {
+      "accuracy": 0.976,
+      "precision": 1.0,
+      "recall": 0.952,
+      "f1": 0.9754,
+      "tp": 476,
+      "fp": 0,
+      "tn": 500,
+      "fn": 24,
+      "total": 1000
+    },
+    "spectrum": {
+      "accuracy": 0.908,
+      "precision": 1.0,
+      "recall": 0.816,
+      "f1": 0.8987,
+      "tp": 408,
+      "fp": 0,
+      "tn": 500,
+      "fn": 92,
+      "total": 1000
+    },
+    "dual": {
+      "accuracy": 0.914,
+      "precision": 1.0,
+      "recall": 0.828,
+      "f1": 0.9059,
+      "tp": 414,
+      "fp": 0,
+      "tn": 500,
+      "fn": 86,
+      "total": 1000
+    }
+  }
+}
