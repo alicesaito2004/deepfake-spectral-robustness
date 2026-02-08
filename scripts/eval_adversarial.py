@@ -5,41 +5,38 @@ Runs PGD attacks at multiple epsilon values against pixel, spectrum, and dual-br
 classifiers. Outputs accuracy vs epsilon curves.
 
 Usage:
-    PYTHONPATH=. python scripts/eval_adversarial.py \
-        --pixel-ckpt checkpoints/pixel_classifier.pt \
-        --spectrum-ckpt checkpoints/spectrum_classifier.pt \
-        --dual-ckpt checkpoints/dual_classifier.pt \
-        --n-samples 500
+    PYTHONPATH=. python scripts/eval_adversarial.py
 """
 
-import argparse
-import json
 import os
+from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 
-from src.attacks import fgsm_attack, pgd_attack
+from src.classifier import PixelClassifier, SpectrumClassifier, DualBranchClassifier
+from src.dataset import DeepfakeDataset, load_splits, get_paths_for_split
 from src.fft import compute_spectrum
 
 
-EPSILONS = [1/255, 2/255, 4/255, 8/255, 16/255]
+EPSILONS = [0, 1/255, 2/255, 4/255, 8/255, 16/255]
 PGD_STEPS = 20
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+N_SAMPLES = 500
+
+if torch.cuda.is_available():
+    DEVICE = torch.device("cuda")
+elif torch.backends.mps.is_available():
+    DEVICE = torch.device("mps")
+else:
+    DEVICE = torch.device("cpu")
 
 
-def load_test_data(data_dir: str, n_samples: int):
-    """Load test images and labels."""
-    from src.dataset import DeepfakeDataset, load_splits, get_paths_for_split
-    from pathlib import Path
-    
-    real_dir = Path(data_dir) / "real"
-    fake_dir = Path(data_dir) / "fake"
-    
-    real_paths = sorted([str(p) for p in real_dir.glob("*.png")])
-    fake_paths = sorted([str(p) for p in fake_dir.glob("*.png")])
+def get_test_loader(n_samples: int, batch_size: int = 32):
+    data_dir = Path("data/processed")
+    real_paths = sorted([str(p) for p in (data_dir / "real").glob("*.png")])
+    fake_paths = sorted([str(p) for p in (data_dir / "fake").glob("*.png")])
     
     splits = load_splits("config/splits.json")
     real_test, fake_test = get_paths_for_split(real_paths, fake_paths, splits, "test")
@@ -49,71 +46,37 @@ def load_test_data(data_dir: str, n_samples: int):
     fake_test = fake_test[:n_each]
     
     dataset = DeepfakeDataset(real_test, fake_test)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=False)
-    
+    loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
     return loader
 
 
-def evaluate_clean(model, loader, model_type: str) -> float:
-    """Evaluate clean accuracy."""
-    model.eval()
-    correct = 0
-    total = 0
+def pgd_attack_pixel(model, images, labels, epsilon, alpha, num_steps):
+    if epsilon == 0:
+        return images.clone()
     
-    with torch.no_grad():
-        for images, spectra, labels in loader:
-            images, spectra, labels = images.to(DEVICE), spectra.to(DEVICE), labels.to(DEVICE)
-            
-            if model_type == "pixel":
-                outputs = model(images)
-            elif model_type == "spectrum":
-                outputs = model(spectra)
-            else:  # dual
-                outputs = model(images, spectra)
-            
-            preds = outputs.argmax(dim=1)
-            correct += (preds == labels).sum().item()
-            total += labels.size(0)
+    criterion = nn.CrossEntropyLoss()
+    perturbed = images.clone().detach()
+    perturbed = perturbed + torch.empty_like(perturbed).uniform_(-epsilon, epsilon)
+    perturbed = torch.clamp(perturbed, 0.0, 1.0)
     
-    return correct / total
+    for _ in range(num_steps):
+        perturbed.requires_grad_(True)
+        outputs = model(perturbed)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        
+        grad_sign = perturbed.grad.sign()
+        perturbed = perturbed.detach() + alpha * grad_sign
+        delta = torch.clamp(perturbed - images, -epsilon, epsilon)
+        perturbed = torch.clamp(images + delta, 0.0, 1.0)
+    
+    return perturbed.detach()
 
 
-def evaluate_adversarial(model, loader, epsilon: float, model_type: str) -> float:
-    """Evaluate accuracy under PGD attack."""
-    model.eval()
-    correct = 0
-    total = 0
-    alpha = epsilon / 4
+def pgd_attack_spectrum(model, images, labels, epsilon, alpha, num_steps):
+    if epsilon == 0:
+        return images.clone()
     
-    for images, spectra, labels in loader:
-        images, spectra, labels = images.to(DEVICE), spectra.to(DEVICE), labels.to(DEVICE)
-        
-        if model_type == "pixel":
-            adv_images = pgd_attack(model, images, labels, epsilon, alpha, PGD_STEPS)
-            with torch.no_grad():
-                outputs = model(adv_images)
-        
-        elif model_type == "spectrum":
-            adv_images = pgd_attack_through_fft(model, images, labels, epsilon, alpha, PGD_STEPS)
-            with torch.no_grad():
-                adv_spectra = compute_spectrum(adv_images)
-                outputs = model(adv_spectra)
-        
-        else:  # dual
-            adv_images = pgd_attack_dual(model, images, labels, epsilon, alpha, PGD_STEPS)
-            with torch.no_grad():
-                adv_spectra = compute_spectrum(adv_images)
-                outputs = model(adv_images, adv_spectra)
-        
-        preds = outputs.argmax(dim=1)
-        correct += (preds == labels).sum().item()
-        total += labels.size(0)
-    
-    return correct / total
-
-
-def pgd_attack_through_fft(model, images, labels, epsilon, alpha, num_steps):
-    """PGD attack where gradients flow through FFT to pixel space."""
     criterion = nn.CrossEntropyLoss()
     perturbed = images.clone().detach()
     perturbed = perturbed + torch.empty_like(perturbed).uniform_(-epsilon, epsilon)
@@ -135,7 +98,9 @@ def pgd_attack_through_fft(model, images, labels, epsilon, alpha, num_steps):
 
 
 def pgd_attack_dual(model, images, labels, epsilon, alpha, num_steps):
-    """PGD attack on dual-branch model, perturbing pixels."""
+    if epsilon == 0:
+        return images.clone()
+    
     criterion = nn.CrossEntropyLoss()
     perturbed = images.clone().detach()
     perturbed = perturbed + torch.empty_like(perturbed).uniform_(-epsilon, epsilon)
@@ -156,55 +121,125 @@ def pgd_attack_dual(model, images, labels, epsilon, alpha, num_steps):
     return perturbed.detach()
 
 
-def verify_gradient_flow():
-    """Verify gradients flow through FFT."""
-    print("Verifying gradient flow through FFT...")
+def evaluate_model(model, loader, epsilon, model_type):
+    model.eval()
+    alpha = epsilon / 4 if epsilon > 0 else 0
+    correct = 0
+    total = 0
     
-    images = torch.rand(2, 3, 64, 64, requires_grad=True)
-    spectra = compute_spectrum(images)
-    loss = spectra.sum()
-    loss.backward()
+    for images, spectra, labels in tqdm(loader, desc=f"eps={epsilon*255:.0f}/255", leave=False):
+        images = images.to(DEVICE)
+        spectra = spectra.to(DEVICE)
+        labels = labels.to(DEVICE)
+        
+        if model_type == "pixel":
+            adv_images = pgd_attack_pixel(model, images, labels, epsilon, alpha, PGD_STEPS)
+            with torch.no_grad():
+                outputs = model(adv_images)
+        
+        elif model_type == "spectrum":
+            adv_images = pgd_attack_spectrum(model, images, labels, epsilon, alpha, PGD_STEPS)
+            with torch.no_grad():
+                adv_spectra = compute_spectrum(adv_images)
+                outputs = model(adv_spectra)
+        
+        else:
+            adv_images = pgd_attack_dual(model, images, labels, epsilon, alpha, PGD_STEPS)
+            with torch.no_grad():
+                adv_spectra = compute_spectrum(adv_images)
+                outputs = model(adv_images, adv_spectra)
+        
+        preds = outputs.argmax(dim=1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
     
-    grad_norm = images.grad.norm().item()
-    if grad_norm > 0:
-        print(f"  PASS: Gradient norm = {grad_norm:.6f}")
-        return True
-    else:
-        print("  FAIL: Gradients are zero!")
-        return False
+    return correct / total
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--pixel-ckpt", type=str, default=None)
-    parser.add_argument("--spectrum-ckpt", type=str, default=None)
-    parser.add_argument("--dual-ckpt", type=str, default=None)
-    parser.add_argument("--data-dir", type=str, default="data/processed")
-    parser.add_argument("--n-samples", type=int, default=500)
-    parser.add_argument("--output-dir", type=str, default="outputs/adversarial")
-    args = parser.parse_args()
+    os.makedirs("outputs/adversarial", exist_ok=True)
     
-    os.makedirs(args.output_dir, exist_ok=True)
+    print(f"Device: {DEVICE}")
+    print(f"Loading {N_SAMPLES} test samples...")
+    loader = get_test_loader(N_SAMPLES)
     
-    if not verify_gradient_flow():
-        print("Fix gradient flow before proceeding.")
-        return
+    print("\nLoading models...")
+    pixel_model = PixelClassifier()
+    pixel_model.load_state_dict(torch.load("checkpoints/pixel_classifier.pt", map_location=DEVICE, weights_only=True))
+    pixel_model.to(DEVICE).eval()
     
-    results = {}
+    spectrum_model = SpectrumClassifier()
+    spectrum_model.load_state_dict(torch.load("checkpoints/spectrum_classifier.pt", map_location=DEVICE, weights_only=True))
+    spectrum_model.to(DEVICE).eval()
     
-    # Load models and evaluate
-    # TODO: Implement model loading once Team 2 provides architecture
-    # For now, this script is ready to run once checkpoints exist
+    dual_model = DualBranchClassifier()
+    dual_model.load_state_dict(torch.load("checkpoints/dual_classifier.pt", map_location=DEVICE, weights_only=True))
+    dual_model.to(DEVICE).eval()
     
-    print("\nWaiting for classifier checkpoints from Team 2.")
-    print("Expected files:")
-    print("  - checkpoints/pixel_classifier.pt")
-    print("  - checkpoints/spectrum_classifier.pt")
-    print("  - checkpoints/dual_classifier.pt")
-    print("\nOnce available, this script will:")
-    print(f"  1. Load {args.n_samples} test images")
-    print(f"  2. Run PGD-{PGD_STEPS} at epsilon = {[f'{e*255:.0f}/255' for e in EPSILONS]}")
-    print("  3. Output accuracy vs epsilon curves")
+    results = {
+        "pixel": [],
+        "spectrum": [],
+        "dual": [],
+    }
+    
+    print("\n" + "="*50)
+    print("Running PGD-20 attacks")
+    print("="*50)
+    
+    for eps in EPSILONS:
+        print(f"\nEpsilon = {eps*255:.0f}/255")
+        
+        print("  Attacking pixel classifier...")
+        acc = evaluate_model(pixel_model, loader, eps, "pixel")
+        results["pixel"].append(acc)
+        print(f"    Accuracy: {acc:.4f}")
+        
+        print("  Attacking spectrum classifier...")
+        acc = evaluate_model(spectrum_model, loader, eps, "spectrum")
+        results["spectrum"].append(acc)
+        print(f"    Accuracy: {acc:.4f}")
+        
+        print("  Attacking dual classifier...")
+        acc = evaluate_model(dual_model, loader, eps, "dual")
+        results["dual"].append(acc)
+        print(f"    Accuracy: {acc:.4f}")
+    
+    print("\n" + "="*50)
+    print("Results Summary")
+    print("="*50)
+    print(f"{'Epsilon':<12} {'Pixel':<12} {'Spectrum':<12} {'Dual':<12}")
+    print("-"*48)
+    for i, eps in enumerate(EPSILONS):
+        print(f"{eps*255:.0f}/255{'':<7} {results['pixel'][i]:<12.4f} {results['spectrum'][i]:<12.4f} {results['dual'][i]:<12.4f}")
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    eps_labels = [f"{e*255:.0f}/255" for e in EPSILONS]
+    
+    ax.plot(eps_labels, results["pixel"], "o-", linewidth=2, markersize=8, label="Pixel", color="steelblue")
+    ax.plot(eps_labels, results["spectrum"], "s-", linewidth=2, markersize=8, label="Spectrum", color="indianred")
+    ax.plot(eps_labels, results["dual"], "^-", linewidth=2, markersize=8, label="Dual", color="seagreen")
+    
+    ax.set_xlabel("Perturbation (ε)", fontsize=12)
+    ax.set_ylabel("Accuracy", fontsize=12)
+    ax.set_title("Adversarial Robustness: PGD-20 Attack", fontsize=14)
+    ax.legend(fontsize=11)
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0, 1.05)
+    
+    plt.tight_layout()
+    save_path = "outputs/adversarial/robustness_curves.png"
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"\nSaved plot: {save_path}")
+    
+    with open("outputs/adversarial/results.txt", "w") as f:
+        f.write("Adversarial Robustness Results (PGD-20)\n")
+        f.write("="*50 + "\n\n")
+        f.write(f"{'Epsilon':<12} {'Pixel':<12} {'Spectrum':<12} {'Dual':<12}\n")
+        f.write("-"*48 + "\n")
+        for i, eps in enumerate(EPSILONS):
+            f.write(f"{eps*255:.0f}/255{'':<7} {results['pixel'][i]:<12.4f} {results['spectrum'][i]:<12.4f} {results['dual'][i]:<12.4f}\n")
+    print("Saved results: outputs/adversarial/results.txt")
 
 
 if __name__ == "__main__":
