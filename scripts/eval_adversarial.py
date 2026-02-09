@@ -20,8 +20,9 @@ from src.classifier import PixelClassifier, SpectrumClassifier, DualBranchClassi
 from src.dataset import DeepfakeDataset, load_splits, get_paths_for_split
 from src.fft import compute_spectrum
 
-
-EPSILONS = [0, 1/255, 2/255, 4/255, 8/255, 16/255]
+# Adjustable parameters
+EPSILONS = [0, 1/255, 2/255, 4/255, 8/255, 16/255, 32/255, 64/255, 128/255]
+# EPSILONS = [0, 1/255, 2/255, 4/255, 8/255, 16/255]
 PGD_STEPS = 20
 N_SAMPLES = 500
 
