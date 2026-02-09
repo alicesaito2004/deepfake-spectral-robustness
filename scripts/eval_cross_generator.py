@@ -139,20 +139,15 @@ def evaluate(model, dataloader, device, input_type="pixel"):
 def load_classifier(name, checkpoint_path, device):
     """
     Load a classifier from checkpoint.
-    Adjust imports here to match your actual classifier module.
     """
-    # Try importing from src.classifier first, fall back to src.models
-    try:
-        from src.classifier import PixelClassifier, SpectrumClassifier, DualClassifier
-    except ImportError:
-        from src.models import PixelClassifier, SpectrumClassifier, DualClassifier
+    from src.classifier import PixelClassifier, SpectrumClassifier, DualBranchClassifier
 
     if name == "pixel":
         model = PixelClassifier()
     elif name == "spectrum":
         model = SpectrumClassifier()
     elif name == "dual":
-        model = DualClassifier()
+        model = DualBranchClassifier()
     else:
         raise ValueError(f"Unknown classifier: {name}")
 
@@ -209,7 +204,8 @@ def main():
     real_paths = sorted([str(p) for p in Path(args.real_dir).glob("*.png")]
                         + [str(p) for p in Path(args.real_dir).glob("*.jpg")])
     splits = load_splits(args.splits_file)
-    real_test_paths, _ = get_paths_for_split(real_paths, [], splits, "test")
+    split = splits["test"]
+    real_test_paths = [real_paths[i] for i in split["real_indices"]]
     print(f"Real test images: {len(real_test_paths)}")
 
     # Determine which SD versions to evaluate
@@ -229,7 +225,7 @@ def main():
 
         dataset = CrossGeneratorDataset(real_test_paths, fake_dir)
         dataloader = DataLoader(
-            dataset, batch_size=args.batch_size, shuffle=False, num_workers=4
+            dataset, batch_size=args.batch_size, shuffle=False, num_workers=0
         )
 
         all_results[sd_ver] = {}
