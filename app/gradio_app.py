@@ -15,6 +15,7 @@ from torchvision import transforms
 
 from src.classifier import PixelClassifier, SpectrumClassifier, DualBranchClassifier
 from src.fft import compute_spectrum
+from src.gradcam import GradCAM, DualBranchGradCAM, overlay_cam_on_image
 
 
 if torch.cuda.is_available():
@@ -138,9 +139,44 @@ def get_prediction(model, img_tensor, model_type):
     return label, conf
 
 
-def run_demo(image, model_choice, attack_type, epsilon):
+def get_gradcam(model, img_tensor, model_type):
+    """Generate Grad-CAM heatmap."""
+    img_np = img_tensor.squeeze().permute(1, 2, 0).cpu().numpy()
+    
+    if model_type == "pixel":
+        gradcam = GradCAM(model, model.backbone.features[-2])
+        cam = gradcam.generate(img_tensor)
+        overlay = overlay_cam_on_image(img_np, cam)
+        gradcam.remove_hooks()
+        return (overlay * 255).astype(np.uint8)
+    
+    elif model_type == "spectrum":
+        spectra = compute_spectrum(img_tensor)
+        gradcam = GradCAM(model, model.backbone.features[-2])
+        cam = gradcam.generate(spectra)
+        gradcam.remove_hooks()
+        # Return heatmap on spectrum (as jet colormap)
+        import matplotlib.pyplot as plt
+        cmap = plt.cm.jet
+        heatmap = cmap(cam)[:, :, :3]
+        return (heatmap * 255).astype(np.uint8)
+    
+    else:  # dual
+        spectra = compute_spectrum(img_tensor)
+        gradcam = DualBranchGradCAM(
+            model,
+            model.pixel_backbone.features[-2],
+            model.spectrum_backbone.features[-2]
+        )
+        pixel_cam, spectrum_cam = gradcam.generate(img_tensor, spectra)
+        gradcam.remove_hooks()
+        overlay = overlay_cam_on_image(img_np, pixel_cam)
+        return (overlay * 255).astype(np.uint8)
+
+
+def run_demo(image, model_choice, attack_type, epsilon, show_gradcam):
     if image is None:
-        return None, None, None, "Upload an image", "", ""
+        return None, None, None, None, "Upload an image", "", "", ""
     
     model, model_type = get_model(model_choice)
     
@@ -180,6 +216,16 @@ def run_demo(image, model_choice, attack_type, epsilon):
     else:
         perturbation = np.zeros_like(orig_img, dtype=np.uint8)
     
+    # Grad-CAM
+    gradcam_img = None
+    gradcam_text = ""
+    if show_gradcam:
+        try:
+            gradcam_img = get_gradcam(model, img_tensor, model_type)
+            gradcam_text = f"Grad-CAM\n({model_choice})"
+        except Exception as e:
+            gradcam_text = f"Grad-CAM error"
+    
     # Format text
     orig_text = f"Pred: {orig_label}\nConf: {orig_conf:.1%}"
     
@@ -188,7 +234,7 @@ def run_demo(image, model_choice, attack_type, epsilon):
     
     adv_text = f"Pred: {adv_label}\nConf: {adv_conf:.1%}"
     
-    return orig_img, perturbation, adv_img, orig_text, pert_text, adv_text
+    return orig_img, perturbation, adv_img, gradcam_img, orig_text, pert_text, adv_text, gradcam_text
 
 
 def create_interface():
@@ -218,31 +264,38 @@ def create_interface():
                     label="Epsilon (ε)"
                 )
                 
+                show_gradcam = gr.Checkbox(label="Show Grad-CAM", value=True)
+                
                 attack_btn = gr.Button("⚡ Run Attack", variant="primary", size="lg")
         
         gr.Markdown("---")
         
-        # Results: Three columns
+        # Results: Four columns
         with gr.Row():
             with gr.Column():
                 gr.Markdown("### Original")
-                orig_display = gr.Image(label=None, show_label=False, height=200)
+                orig_display = gr.Image(label=None, show_label=False, height=180)
                 orig_pred = gr.Textbox(label=None, show_label=False, lines=2, text_align="center")
             
             with gr.Column():
                 gr.Markdown("### Perturbation (10×)")
-                pert_display = gr.Image(label=None, show_label=False, height=200)
+                pert_display = gr.Image(label=None, show_label=False, height=180)
                 pert_info = gr.Textbox(label=None, show_label=False, lines=2, text_align="center")
             
             with gr.Column():
                 gr.Markdown("### Adversarial")
-                adv_display = gr.Image(label=None, show_label=False, height=200)
+                adv_display = gr.Image(label=None, show_label=False, height=180)
                 adv_pred = gr.Textbox(label=None, show_label=False, lines=2, text_align="center")
+            
+            with gr.Column():
+                gr.Markdown("### Grad-CAM")
+                gradcam_display = gr.Image(label=None, show_label=False, height=180)
+                gradcam_text = gr.Textbox(label=None, show_label=False, lines=2, text_align="center")
         
         attack_btn.click(
             fn=run_demo,
-            inputs=[input_image, model_choice, attack_type, epsilon_slider],
-            outputs=[orig_display, pert_display, adv_display, orig_pred, pert_info, adv_pred]
+            inputs=[input_image, model_choice, attack_type, epsilon_slider, show_gradcam],
+            outputs=[orig_display, pert_display, adv_display, gradcam_display, orig_pred, pert_info, adv_pred, gradcam_text]
         )
         
         gr.Markdown("---")
