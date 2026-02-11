@@ -108,17 +108,17 @@ def create_detailed_backbone():
 
 def create_pixel_classifier_detailed():
     """Create detailed pixel classifier flowchart."""
-    fig, ax = plt.subplots(1, 1, figsize=(14, 6))
-    ax.set_xlim(0, 14)
-    ax.set_ylim(0, 6)
+    fig, ax = plt.subplots(1, 1, figsize=(16, 5))
+    ax.set_xlim(0, 16)
+    ax.set_ylim(0, 5)
     ax.axis('off')
     ax.set_title('Pixel Classifier — Full Architecture\nInput: RGB Image | Output: Real/Fake', 
                  fontsize=14, fontweight='bold', pad=20)
     
-    y = 3.5
+    y = 2.8
     
     # Input
-    draw_box(ax, 1.5, y, 2, 1.5, 'Input\nRGB Image\n3×256×256', '#ff7675', 10)
+    draw_box(ax, 1.2, y, 1.6, 1.4, 'Input\nRGB Image\n3×256×256', '#ff7675', 9)
     
     # Backbone blocks
     blocks = [
@@ -128,34 +128,36 @@ def create_pixel_classifier_detailed():
         ('Block 4\nConv 128→256\nBN, ReLU\nPool 2×2', '256×16×16'),
     ]
     
-    x_pos = 4
+    x_pos = 3.2
     for i, (block_text, dim) in enumerate(blocks):
-        draw_box(ax, x_pos, y, 1.8, 1.8, block_text, '#74b9ff', 8)
-        ax.text(x_pos, y - 1.3, dim, ha='center', fontsize=7, 
+        draw_box(ax, x_pos, y, 1.6, 1.6, block_text, '#74b9ff', 8)
+        ax.text(x_pos, y - 1.2, dim, ha='center', fontsize=7, 
                 bbox=dict(boxstyle='round', facecolor='white', edgecolor='gray', alpha=0.8))
         if i < 3:
-            draw_arrow(ax, (x_pos + 0.9, y), (x_pos + 1.1, y))
-        x_pos += 2
+            draw_arrow(ax, (x_pos + 0.8, y), (x_pos + 1.0, y))
+        x_pos += 1.8
     
     # Global Average Pool
-    draw_box(ax, 12, y, 1.5, 1.3, 'Global\nAvgPool\n256×1×1', '#ffeaa7', 9)
+    draw_box(ax, 11, y, 1.2, 1.2, 'GAP\n256×1×1', '#ffeaa7', 9)
     
-    # Flatten + Linear
-    draw_box(ax, 12, y - 2, 1.5, 1, 'Flatten\n→ 256', '#81ecec', 9)
-    draw_box(ax, 12, y - 3.5, 1.5, 1, 'Linear\n256 → 2', '#55efc4', 9)
+    # Flatten
+    draw_box(ax, 12.5, y, 1, 1.2, 'Flatten\n256', '#81ecec', 9)
+    
+    # Linear
+    draw_box(ax, 14, y, 1.2, 1.2, 'Linear\n256→2', '#55efc4', 9)
     
     # Output
-    draw_box(ax, 12, y - 5, 1.5, 0.8, 'Softmax\nReal/Fake', '#dfe6e9', 9)
+    draw_box(ax, 15.3, y, 1, 1.2, 'Output\nReal/\nFake', '#dfe6e9', 8)
     
     # Arrows
-    draw_arrow(ax, (2.5, y), (3.1, y))
-    draw_arrow(ax, (9.9, y), (11.25, y))
-    draw_arrow(ax, (12, y - 0.65), (12, y - 1.5))
-    draw_arrow(ax, (12, y - 2.5), (12, y - 3))
-    draw_arrow(ax, (12, y - 4), (12, y - 4.6))
+    draw_arrow(ax, (2, y), (2.4, y))
+    draw_arrow(ax, (10.2, y), (10.4, y))
+    draw_arrow(ax, (11.6, y), (12, y))
+    draw_arrow(ax, (13, y), (13.4, y))
+    draw_arrow(ax, (14.6, y), (14.8, y))
     
     # Parameter count
-    ax.text(7, 0.5, 'Total Parameters: ~591K (backbone) + 514 (classifier) = ~592K', 
+    ax.text(8, 0.6, 'Total Parameters: ~591K (backbone) + 514 (classifier) = ~592K', 
             ha='center', fontsize=10, fontweight='bold',
             bbox=dict(boxstyle='round', facecolor='lightyellow'))
     
@@ -168,53 +170,54 @@ def create_pixel_classifier_detailed():
 
 def create_spectrum_classifier_detailed():
     """Create detailed spectrum classifier flowchart."""
-    fig, ax = plt.subplots(1, 1, figsize=(16, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(16, 5))
     ax.set_xlim(0, 16)
-    ax.set_ylim(0, 6)
+    ax.set_ylim(0, 5)
     ax.axis('off')
     ax.set_title('Spectrum Classifier — Full Architecture\nInput: RGB Image → FFT → Magnitude Spectrum | Output: Real/Fake', 
                  fontsize=14, fontweight='bold', pad=20)
     
-    y = 3.5
+    y = 2.8
     
     # Input
-    draw_box(ax, 1.2, y, 1.8, 1.5, 'Input\nRGB Image\n3×256×256', '#ff7675', 9)
+    draw_box(ax, 1, y, 1.4, 1.4, 'Input\nRGB Image\n3×256×256', '#ff7675', 8)
     
     # FFT Processing
-    draw_box(ax, 3.2, y, 1.5, 1.5, 'Grayscale\nConvert\n1×256×256', '#dfe6e9', 8)
-    draw_box(ax, 5.2, y, 1.5, 1.5, 'FFT2D\n+\nfftshift', '#a29bfe', 9)
-    draw_box(ax, 7.2, y, 1.5, 1.5, 'Log\nMagnitude\n1×256×256', '#fd79a8', 8)
+    draw_box(ax, 2.6, y, 1.2, 1.4, 'Grayscale\n1×256×256', '#dfe6e9', 8)
+    draw_box(ax, 4.1, y, 1.2, 1.4, 'FFT2D\nfftshift', '#a29bfe', 8)
+    draw_box(ax, 5.6, y, 1.2, 1.4, 'Log Mag\n1×256×256', '#fd79a8', 8)
     
     # Backbone blocks  
-    x_pos = 9.2
-    blocks = ['B1\n1→32', 'B2\n32→64', 'B3\n64→128', 'B4\n128→256']
-    for i, block_text in enumerate(blocks):
-        draw_box(ax, x_pos, y, 1, 1.2, block_text, '#74b9ff', 8)
+    blocks = [
+        ('Block 1\nConv 1→32\nBN, ReLU\nPool 2×2', '32×128×128'),
+        ('Block 2\nConv 32→64\nBN, ReLU\nPool 2×2', '64×64×64'),
+        ('Block 3\nConv 64→128\nBN, ReLU\nPool 2×2', '128×32×32'),
+        ('Block 4\nConv 128→256\nBN, ReLU\nPool 2×2', '256×16×16'),
+    ]
+    
+    x_pos = 7.2
+    for i, (block_text, dim) in enumerate(blocks):
+        draw_box(ax, x_pos, y, 1.4, 1.6, block_text, '#74b9ff', 7)
+        ax.text(x_pos, y - 1.2, dim, ha='center', fontsize=6, 
+                bbox=dict(boxstyle='round', facecolor='white', edgecolor='gray', alpha=0.8))
         if i < 3:
-            draw_arrow(ax, (x_pos + 0.5, y), (x_pos + 0.7, y))
-        x_pos += 1.2
+            draw_arrow(ax, (x_pos + 0.7, y), (x_pos + 0.9, y))
+        x_pos += 1.6
     
     # Final layers
-    draw_box(ax, 14.2, y, 1, 1, 'GAP\n256', '#ffeaa7', 8)
-    draw_box(ax, 15.2, y, 1, 1, 'Linear\n256→2', '#55efc4', 8)
+    draw_box(ax, 13.8, y, 1, 1.2, 'GAP\n256', '#ffeaa7', 8)
+    draw_box(ax, 15, y, 1.2, 1.2, 'Linear\n256→2', '#55efc4', 8)
     
     # Arrows
-    draw_arrow(ax, (2.1, y), (2.45, y))
-    draw_arrow(ax, (3.95, y), (4.45, y))
-    draw_arrow(ax, (5.95, y), (6.45, y))
-    draw_arrow(ax, (7.95, y), (8.7, y))
-    draw_arrow(ax, (13.4, y), (13.7, y))
-    draw_arrow(ax, (14.7, y), (14.7, y))
-    
-    # Dimension annotations
-    ax.text(5.2, y - 1.3, 'Complex\nspectrum', ha='center', fontsize=7, style='italic')
-    ax.text(7.2, y - 1.3, 'log(|FFT| + ε)', ha='center', fontsize=7, style='italic')
-    ax.text(13.6, y - 1, '256×16×16', ha='center', fontsize=7)
+    draw_arrow(ax, (1.7, y), (2, y))
+    draw_arrow(ax, (3.2, y), (3.5, y))
+    draw_arrow(ax, (4.7, y), (5, y))
+    draw_arrow(ax, (6.2, y), (6.5, y))
+    draw_arrow(ax, (13, y), (13.3, y))
+    draw_arrow(ax, (14.3, y), (14.4, y))
     
     # Notes
-    ax.text(8, 0.8, 'FFT captures frequency artifacts from AI generators', 
-            ha='center', fontsize=10, style='italic')
-    ax.text(8, 0.3, 'Total Parameters: ~590K (1-channel backbone) + 514 = ~590K', 
+    ax.text(8, 0.6, 'Total Parameters: ~590K (1-channel backbone) + 514 = ~590K', 
             ha='center', fontsize=10, fontweight='bold',
             bbox=dict(boxstyle='round', facecolor='lightyellow'))
     

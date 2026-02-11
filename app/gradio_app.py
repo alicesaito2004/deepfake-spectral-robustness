@@ -1,5 +1,6 @@
 """
-Gradio web interface for deepfake detection.
+Gradio web interface for deepfake detection with adversarial attack demo.
+Single page layout with side-by-side comparison.
 
 Usage:
     PYTHONPATH=. python app/gradio_app.py
@@ -7,13 +8,13 @@ Usage:
 
 import gradio as gr
 import torch
+import torch.nn as nn
 import numpy as np
 from PIL import Image
 from torchvision import transforms
 
 from src.classifier import PixelClassifier, SpectrumClassifier, DualBranchClassifier
 from src.fft import compute_spectrum
-from src.gradcam import GradCAM, DualBranchGradCAM, overlay_cam_on_image
 
 
 if torch.cuda.is_available():
@@ -30,131 +31,223 @@ transform = transforms.Compose([
     transforms.ToTensor(),
 ])
 
+# Global models
 pixel_model = None
 spectrum_model = None
 dual_model = None
-pixel_gradcam = None
-spectrum_gradcam = None
-dual_gradcam = None
 
 
 def load_models():
     global pixel_model, spectrum_model, dual_model
-    global pixel_gradcam, spectrum_gradcam, dual_gradcam
     
     pixel_model = PixelClassifier()
     pixel_model.load_state_dict(torch.load("checkpoints/pixel_classifier.pt", map_location=DEVICE, weights_only=True))
     pixel_model.to(DEVICE).eval()
-    pixel_gradcam = GradCAM(pixel_model, pixel_model.backbone.features[-2])
     
     spectrum_model = SpectrumClassifier()
     spectrum_model.load_state_dict(torch.load("checkpoints/spectrum_classifier.pt", map_location=DEVICE, weights_only=True))
     spectrum_model.to(DEVICE).eval()
-    spectrum_gradcam = GradCAM(spectrum_model, spectrum_model.backbone.features[-2])
     
     dual_model = DualBranchClassifier()
     dual_model.load_state_dict(torch.load("checkpoints/dual_classifier.pt", map_location=DEVICE, weights_only=True))
     dual_model.to(DEVICE).eval()
-    dual_gradcam = DualBranchGradCAM(
-        dual_model,
-        dual_model.pixel_backbone.features[-2],
-        dual_model.spectrum_backbone.features[-2]
-    )
 
 
-def predict(image, model_choice, show_gradcam):
-    if image is None:
-        return None, "Please upload an image", None, None
-    
+def get_model(model_choice):
     if pixel_model is None:
-        try:
-            load_models()
-        except Exception as e:
-            return None, f"Error loading models: {e}", None, None
+        load_models()
     
-    if isinstance(image, np.ndarray):
-        image = Image.fromarray(image)
+    if model_choice == "Pixel":
+        return pixel_model, "pixel"
+    elif model_choice == "Spectrum":
+        return spectrum_model, "spectrum"
+    else:
+        return dual_model, "dual"
+
+
+def fgsm_attack(model, images, labels, epsilon, model_type):
+    criterion = nn.CrossEntropyLoss()
+    images = images.clone().detach().requires_grad_(True)
     
-    img_tensor = transform(image.convert("RGB")).unsqueeze(0).to(DEVICE)
-    spectrum_tensor = compute_spectrum(img_tensor)
+    if model_type == "pixel":
+        outputs = model(images)
+    elif model_type == "spectrum":
+        spectra = compute_spectrum(images)
+        outputs = model(spectra)
+    else:
+        spectra = compute_spectrum(images)
+        outputs = model(images, spectra)
     
-    with torch.no_grad():
-        if model_choice == "Pixel":
-            outputs = pixel_model(img_tensor)
-        elif model_choice == "Spectrum":
-            outputs = spectrum_model(spectrum_tensor)
+    loss = criterion(outputs, labels)
+    loss.backward()
+    
+    grad_sign = images.grad.sign()
+    perturbed = images + epsilon * grad_sign
+    perturbed = torch.clamp(perturbed, 0.0, 1.0)
+    
+    return perturbed.detach()
+
+
+def pgd_attack(model, images, labels, epsilon, model_type, num_steps=20):
+    criterion = nn.CrossEntropyLoss()
+    alpha = epsilon / 4
+    
+    perturbed = images.clone().detach()
+    perturbed = perturbed + torch.empty_like(perturbed).uniform_(-epsilon, epsilon)
+    perturbed = torch.clamp(perturbed, 0.0, 1.0)
+    
+    for _ in range(num_steps):
+        perturbed.requires_grad_(True)
+        
+        if model_type == "pixel":
+            outputs = model(perturbed)
+        elif model_type == "spectrum":
+            spectra = compute_spectrum(perturbed)
+            outputs = model(spectra)
         else:
-            outputs = dual_model(img_tensor, spectrum_tensor)
+            spectra = compute_spectrum(perturbed)
+            outputs = model(perturbed, spectra)
+        
+        loss = criterion(outputs, labels)
+        loss.backward()
+        
+        grad_sign = perturbed.grad.sign()
+        perturbed = perturbed.detach() + alpha * grad_sign
+        delta = torch.clamp(perturbed - images, -epsilon, epsilon)
+        perturbed = torch.clamp(images + delta, 0.0, 1.0)
+    
+    return perturbed.detach()
+
+
+def get_prediction(model, img_tensor, model_type):
+    with torch.no_grad():
+        if model_type == "pixel":
+            outputs = model(img_tensor)
+        elif model_type == "spectrum":
+            spectra = compute_spectrum(img_tensor)
+            outputs = model(spectra)
+        else:
+            spectra = compute_spectrum(img_tensor)
+            outputs = model(img_tensor, spectra)
         
         probs = torch.softmax(outputs, dim=1)
         pred = outputs.argmax(dim=1).item()
         conf = probs[0, pred].item()
     
     label = "FAKE" if pred == 1 else "REAL"
-    result_text = f"Prediction: {label}\nConfidence: {conf:.2%}"
+    return label, conf
+
+
+def run_demo(image, model_choice, attack_type, epsilon):
+    if image is None:
+        return None, None, None, "Upload an image", "", ""
     
-    spectrum_vis = spectrum_tensor.squeeze().cpu().numpy()
-    spectrum_vis = (spectrum_vis - spectrum_vis.min()) / (spectrum_vis.max() - spectrum_vis.min())
-    spectrum_vis = (spectrum_vis * 255).astype(np.uint8)
+    model, model_type = get_model(model_choice)
     
-    gradcam_vis = None
-    if show_gradcam:
-        img_np = img_tensor.squeeze().permute(1, 2, 0).cpu().numpy()
-        
-        if model_choice == "Pixel":
-            cam = pixel_gradcam.generate(img_tensor)
-            gradcam_vis = overlay_cam_on_image(img_np, cam)
-            gradcam_vis = (gradcam_vis * 255).astype(np.uint8)
-        
-        elif model_choice == "Spectrum":
-            cam = spectrum_gradcam.generate(spectrum_tensor)
-            import matplotlib.pyplot as plt
-            cmap = plt.cm.jet
-            gradcam_vis = cmap(cam)[:, :, :3]
-            gradcam_vis = (gradcam_vis * 255).astype(np.uint8)
-        
-        else:
-            pixel_cam, spectrum_cam = dual_gradcam.generate(img_tensor, spectrum_tensor)
-            gradcam_vis = overlay_cam_on_image(img_np, pixel_cam)
-            gradcam_vis = (gradcam_vis * 255).astype(np.uint8)
+    if isinstance(image, np.ndarray):
+        image = Image.fromarray(image)
     
-    return result_text, spectrum_vis, gradcam_vis
+    img_tensor = transform(image.convert("RGB")).unsqueeze(0).to(DEVICE)
+    
+    # Original prediction
+    orig_label, orig_conf = get_prediction(model, img_tensor, model_type)
+    orig_pred = 1 if orig_label == "FAKE" else 0
+    target_label = torch.tensor([orig_pred]).to(DEVICE)
+    
+    # Run attack
+    epsilon_val = epsilon / 255.0
+    
+    if attack_type == "FGSM":
+        adv_tensor = fgsm_attack(model, img_tensor, target_label, epsilon_val, model_type)
+    else:
+        adv_tensor = pgd_attack(model, img_tensor, target_label, epsilon_val, model_type)
+    
+    # Adversarial prediction
+    adv_label, adv_conf = get_prediction(model, adv_tensor, model_type)
+    
+    # Convert to display images
+    orig_img = img_tensor.squeeze().permute(1, 2, 0).cpu().numpy()
+    orig_img = (orig_img * 255).astype(np.uint8)
+    
+    adv_img = adv_tensor.squeeze().permute(1, 2, 0).cpu().numpy()
+    adv_img = (adv_img * 255).astype(np.uint8)
+    
+    # Perturbation magnified 10x
+    perturbation = (adv_tensor - img_tensor).squeeze().permute(1, 2, 0).cpu().numpy()
+    perturbation = np.abs(perturbation) * 10
+    if perturbation.max() > 0:
+        perturbation = (perturbation / perturbation.max() * 255).astype(np.uint8)
+    else:
+        perturbation = np.zeros_like(orig_img, dtype=np.uint8)
+    
+    # Format text
+    orig_text = f"Pred: {orig_label}\nConf: {orig_conf:.1%}"
+    
+    attack_success = "✓ FLIPPED!" if orig_label != adv_label else "✗ Failed"
+    pert_text = f"ε = {epsilon}/255\n{attack_type}\n{attack_success}"
+    
+    adv_text = f"Pred: {adv_label}\nConf: {adv_conf:.1%}"
+    
+    return orig_img, perturbation, adv_img, orig_text, pert_text, adv_text
 
 
 def create_interface():
-    with gr.Blocks(title="Deepfake Detector") as demo:
-        gr.Markdown("# Deepfake Detection with Spectral Analysis")
-        gr.Markdown("Upload an image to detect if it's real or AI-generated.")
+    with gr.Blocks(title="Deepfake Adversarial Demo", theme=gr.themes.Soft()) as demo:
+        gr.Markdown("# 🎭 Deepfake Detection — Adversarial Attack Demo")
+        gr.Markdown("See how imperceptible perturbations fool deepfake classifiers")
         
         with gr.Row():
-            with gr.Column():
-                input_image = gr.Image(label="Upload Image", type="pil")
+            # Left: Controls
+            with gr.Column(scale=1):
+                input_image = gr.Image(label="Upload Image", type="pil", height=250)
+                
                 model_choice = gr.Radio(
                     choices=["Pixel", "Spectrum", "Dual"],
-                    value="Dual",
+                    value="Pixel",
                     label="Classifier"
                 )
-                show_gradcam = gr.Checkbox(label="Show Grad-CAM", value=True)
-                submit_btn = gr.Button("Analyze", variant="primary")
+                
+                attack_type = gr.Radio(
+                    choices=["FGSM", "PGD-20"],
+                    value="FGSM",
+                    label="Attack"
+                )
+                
+                epsilon_slider = gr.Slider(
+                    minimum=1, maximum=32, step=1, value=8,
+                    label="Epsilon (ε)"
+                )
+                
+                attack_btn = gr.Button("⚡ Run Attack", variant="primary", size="lg")
+        
+        gr.Markdown("---")
+        
+        # Results: Three columns
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("### Original")
+                orig_display = gr.Image(label=None, show_label=False, height=200)
+                orig_pred = gr.Textbox(label=None, show_label=False, lines=2, text_align="center")
             
             with gr.Column():
-                result_text = gr.Textbox(label="Result", lines=3)
-                spectrum_output = gr.Image(label="Frequency Spectrum")
-                gradcam_output = gr.Image(label="Grad-CAM Attention")
+                gr.Markdown("### Perturbation (10×)")
+                pert_display = gr.Image(label=None, show_label=False, height=200)
+                pert_info = gr.Textbox(label=None, show_label=False, lines=2, text_align="center")
+            
+            with gr.Column():
+                gr.Markdown("### Adversarial")
+                adv_display = gr.Image(label=None, show_label=False, height=200)
+                adv_pred = gr.Textbox(label=None, show_label=False, lines=2, text_align="center")
         
-        submit_btn.click(
-            fn=predict,
-            inputs=[input_image, model_choice, show_gradcam],
-            outputs=[result_text, spectrum_output, gradcam_output]
+        attack_btn.click(
+            fn=run_demo,
+            inputs=[input_image, model_choice, attack_type, epsilon_slider],
+            outputs=[orig_display, pert_display, adv_display, orig_pred, pert_info, adv_pred]
         )
         
-        gr.Markdown("### How it works")
+        gr.Markdown("---")
         gr.Markdown("""
-        - **Pixel Classifier**: Analyzes raw RGB pixels
-        - **Spectrum Classifier**: Analyzes frequency domain (FFT magnitude)
-        - **Dual Classifier**: Combines both approaches
-        
-        The Grad-CAM visualization shows which regions/frequencies the model focuses on.
+        **Tips:** Try ε=8 first (imperceptible). Compare Pixel vs Spectrum vs Dual — which is harder to fool?
         """)
     
     return demo
